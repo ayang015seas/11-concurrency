@@ -111,8 +111,7 @@ string letter by letter.
 writeAction :: String -> Action
 writeAction (c : cs) =
   Atom $ do
-    putChar c
-    return (writeAction cs)
+    putChar c >> return (writeAction cs)
 writeAction [] = Stop
 
 {-
@@ -231,7 +230,8 @@ Let's see what happens with this program.
 {-
 We can then sequence "parameterized actions" together using this function.
 -}
-
+-- lets think about what happens here
+--So the wr
 sequenceComputation ::
   (Action -> Action) ->
   (Action -> Action) ->
@@ -299,7 +299,7 @@ sequenceComp ::
   (a -> (b -> Action) -> Action) -> -- pass to another
   (b -> Action) ->
   Action
-sequenceComp m f = (\x -> m (\a -> let z = (f a x) in z))
+sequenceComp m f b = m (\a -> let z = f a b in z)
 
 {-
 To sequence computations, we first abstract the current continuation
@@ -394,6 +394,7 @@ continuation.  (We know that the monadic computation `m` will not be
 interrupted; that is why this is called "atomic".)
 -}
 
+-- takes IO, wraps it in C
 atom :: IO a -> C a
 atom io = C $ \k -> Atom $ do
   v <- io
@@ -404,7 +405,7 @@ For thread spawning, there are multiple possible primitives -- we'll present
 just one here.  This primitive turns its argument into a separate "top-level"
 action and then continues the current computation.
 -}
-
+-- Forks arg into separate action, continues current computation
 fork :: C () -> C ()
 fork m = C $ \k -> Fork (runC m (const Stop)) (k ())
 
@@ -413,6 +414,7 @@ Finally, running a computation is merely turning it into an action and then
 giving it to the thread scheduler.
 -}
 
+-- turns into action before running it
 run :: C a -> IO ()
 run m = sched [runC m (const Stop)]
 

@@ -43,15 +43,18 @@ Here are the definitions that we saw before, describing monads that support
 non-blocking I/O.
 -}
 
+-- interface declaration for write and input
 class Monad m => Output m where
   write :: String -> m ()
 
 class Monad m => Input m where
   input :: m (Maybe String) -- only return input if it is ready
 
+-- extend io monad to output behavior
 instance Output IO where
   write = putStr
 
+-- extend io monad to input behavior
 instance Input IO where
   input = do
     x <- IO.hReady IO.stdin
@@ -122,8 +125,15 @@ Complete the definition of the input function so that it accesses the
 `fsInput` to be the tail of the list.
 -}
 
+-- where are these things being called?
+
 instance Input FakeIO where
-  input = undefined
+  input = do
+    st <- S.get
+    let inputComp = fsInput st
+    case inputComp of
+      [] -> return Nothing
+      (x : xs) -> (S.put $ st {fsInput = xs}) >> return x
 
 {-
 We can run the `FakeIO` monad by giving it an initial state.
@@ -147,6 +157,7 @@ testEcho =
     ~?= ["hello", "\n"]
 
 -- >>> runTestTT testEcho
+-- Counts {cases = 1, tried = 1, errors = 0, failures = 0}
 
 testEcho2 :: Test
 testEcho2 =
@@ -156,15 +167,21 @@ testEcho2 =
     ~?= ["hello", "\n", "CIS 552", "\n"]
 
 -- >>> runTestTT testEcho2
+-- Counts {cases = 1, tried = 1, errors = 0, failures = 0}
 
 {-
 Now write a test of your own, for a simple IO progam of your own devising.
 -}
 
 test3 :: Test
-test3 = runFakeIO undefined undefined ~?= undefined
+test3 =
+  runFakeIO
+    (echo >> echo >> echo)
+    [Just "hello", Nothing, Just "CIS 552", Just "hello"]
+    ~?= ["hello", "\n", "CIS 552", "\n", "hello", "\n"]
 
 -- >>> runTestTT test3
+-- Counts {cases = 1, tried = 1, errors = 0, failures = 0}
 
 {-
 A generic concurrency monad
@@ -197,8 +214,8 @@ Now, make this new type a monad:
 -}
 
 instance Monad m => Monad (C m) where
-  return x = undefined
-  m >>= f = undefined
+  return x = C (\k -> k x)
+  m >>= f = C $ do \k -> runC m (\v -> runC (f v) k)
 
 instance Monad m => Applicative (C m) where
   pure = return
@@ -216,12 +233,16 @@ just add them with a click, but make sure that you understand why these operatio
 have the types that they do.
 -}
 
+atom :: Functor m => m a -> C m a
 atom m = C $ \k -> Atom (fmap k m)
 
+run :: Monad m => C m b -> m ()
 run m = sched [runC m $ const Stop]
 
+fork :: C m b -> C m ()
 fork m = C $ \k -> Fork (runC m $ const Stop) (k ())
 
+sched :: Monad m => [Action m] -> m ()
 sched [] = return ()
 sched (Atom m : cs) = m >>= \a -> sched (cs ++ [a])
 sched (Fork a1 a2 : cs) = sched (cs ++ [a1, a2])
@@ -240,10 +261,10 @@ this new parameterized concurrency monad.
 -}
 
 instance Input m => Input (C m) where
-  input = undefined
+  input = atom input
 
 instance Output m => Output (C m) where
-  write = undefined
+  write s = atom (write s)
 
 {-
 (More generally, note that `C` is a *monad transformer*. We can make the
@@ -275,12 +296,13 @@ Or run it in the *Concurrent* FakeIO monad.
 -}
 
 runCFakeIO :: C FakeIO () -> [Maybe String] -> [String]
-runCFakeIO x inputs = undefined
+runCFakeIO fio = runFakeIO (run fio)
 
 testWrite :: Test
 testWrite = runCFakeIO example [] ~?= ["Hello ", "CIS", "552"]
 
 -- >>> runTestTT testWrite
+-- Counts {cases = 1, tried = 1, errors = 0, failures = 0}
 
 {-
 Write your own example of a (terminating) concurrent program, and a test
@@ -288,9 +310,13 @@ demonstrating what it does.
 -}
 
 example2 :: (Input m, Output m) => C m ()
-example2 = undefined
+example2 = do
+  fork (write "abc" >> write "hello")
+  fork (write "alp" >> write "new")
+  write "asdf"
 
 testExample2 :: Test
-testExample2 = undefined
+testExample2 = runCFakeIO example2 [] ~?= ["abc", "asdf", "hello"]
 
 -- >>> runTestTT testExample2
+-- Counts {cases = 1, tried = 1, errors = 0, failures = 0}
